@@ -1,0 +1,534 @@
+---
+title: "R Boot Camp Problem Set"
+author: "Carly Bobak"
+date: "August 11, 2022"
+output: pdf_document
+---
+
+Establishing reliable biomarkers for assessing and validating clinical diagnosis at early stages of Parkinson's disease is crucial for developing therapies to slow or halt disease progression. This data set uses whole blood gene expression profiling from over 500 individuals where we will attempt to find a gene signature. This repository contains the gene expression profiles collected in the GENEPARK consortium. The main study sought a classifier for IPD. These data contain 233 healthy controls, 205 IPD patients, and 48 patients with other neurodegenerative diseases (NDD). Other samples are available in the data and can be used for additional analyses. The largest class of these additional samples are 22 samples from genetic unaffected controls and 41 genetic PD patients.
+
+Note: the original study which uploaded this data to NIH Geo is not yet published.
+
+\section{Data Wrangling}
+
+Let's start by loading in our data sets. Download these from the canvas site, and make a new folder for R bootcamp. We'll switch to this directory here. 
+
+```{r, setup, include=FALSE}
+## If you have never created an R Markdown document before, go to
+## File -> New File -> R Markdown -> click "Yes"
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/Users/kevinrouse78/Desktop/QBS 103/")
+
+r <- getOption("repos")
+r["CRAN"] <- "http://cran.cnr.berkeley.edu/"
+options(repos = r)
+
+```
+
+The tinyTex package will allow you to actually knit .pdf documentats from RMarkdown:
+
+```{r set wd, message=FALSE, warning=FALSE, results=FALSE, echo=FALSE}
+#uncomment these for first runthrough
+library("tinytex")
+#tinytex::install_tinytex()  # install TinyTeX
+```
+
+Note that we have both a phenotype file, as well as a file which includes the normalized and log transformed expression values. We can use the read.csv function to load in these files. 
+
+```{r load data}
+pheno <- read.csv("/Users/kevinrouse78/Desktop/QBS 103/Final Project/parkPheno.csv")
+expr <- read.csv("/Users/kevinrouse78/Desktop/QBS 103/Final Project/simulatedData.csv")
+```
+
+We should start by summarizing both these files. Try the following functions: head(), and View(). Note that while the dimensions on our phenotype file are reasonable, we have 552 columns in our expression file. Just summarize the first 10 columns of this file. 
+
+```{r check out the data}
+head(pheno)
+
+head(expr,10)
+
+```
+Try summarizing the phenotype data:
+
+```{r summarize the data}
+summary(pheno)
+```
+
+We make the following observations. 
+
+\begin{enumerate}
+\item We have some unnecessary data in this file. We aren't interested in the submission and last update date. We can reduce the dimensions of this file so it handles nicer from now on. 
+\item We have a LOT of missing data. You'll learn how to handle this in some of your biostats classes! For now, we'll run what analyses we can given the data we have.
+\item Some of our scores have been read in as character values (and they should be numbers). If you investigate this further, you'll find that some values have been recorded as "ND", which we'll assume means "no data". We will need to record these as NA values in R. 
+\end{enumerate}
+
+Our next step is to address item one. We will reduce the dimensions of our pheno data frame to include only that information that we're interested in modelling. We can exclude the dates, type (as it's all RNA), tissue (all whole blood), organism (all homo sapiens), and subject ID (we will be using geo_accession as our unique indicator). As well, we will exclude mutated_pd_genes, as we indend to define our own gene signature later this week.
+
+Subset your pheno data frame to include columns 1,8,9,11:20.
+
+```{r reduce pheno} 
+pheno <- pheno[,c(1,8,9,11:20)]
+```
+
+Next we need to correct the columns which contain "ND". You can use the "which" function to find the index of of the matrices which are "ND", and then set these to NA. Set columns 8,9,11,12,13 to numeric values using the "as.numeric" function inside a "sapply" loop. Run a summary of the data frame again.
+
+```{r replace ND, warning=F}
+index <- which(pheno == " ND", arr.ind=T)
+pheno[index] <- NA
+
+j <- c(8,9,11,12,13)
+pheno[,j] <- sapply(unlist(pheno[,j]),as.numeric)
+
+summary(pheno)
+```
+
+We have a LOT of missing values present in the data! As mentioned before, imputation of missing values is an entire field unto itself. While we won't be imputing data today, we are going to wrangle the above data to attempt to ameliorate some of these missing values. 
+
+To do this we will:
+
+1. Combine our Age variables to be age_at_exam where known, but age_at_symptoms where that is observed without age at exam
+2. Combine our updrs scores to be the average updrs
+3. Combine our hoehn scores to be the average hoehn
+4. Keep our moca score as is
+5. Remove the old variables from our pheno dataset. 
+
+```{r}
+#1
+for (i in 1:nrow(pheno)){
+  if(is.na(pheno$age_at_exam[i])==FALSE){
+    pheno$AgeMaster[i] <- pheno$age_at_exam[i]
+  } else if(is.na(pheno$age_at_symptoms[i])==FALSE){
+    pheno$AgeMaster[i] <- pheno$age_at_symptoms[i]
+  } else
+    pheno$AgeMaster[i] <- NA
+}
+
+#2
+for (i in 1:nrow(pheno)){
+  pheno$AvgUpdrs[i] <- mean(c(pheno$updrs[i],
+                              pheno$updrs_ii[i], pheno$updrs_iii_score_on[i], 
+                              pheno$updrs_iii_score_off[i], pheno$updrs_iv[i] 
+                              ),na.rm=T)
+}
+#3
+for (i in 1:nrow(pheno)){
+  pheno$AvgHoehn[i] <- mean(c(pheno$hoehn_yahr_off[i], pheno$hoehn_yahr_on[i]
+                              ),na.rm=T)
+}
+#4 Keep moca score
+#5 
+pheno$age_at_exam <- NULL
+pheno$age_at_symptoms <- NULL
+pheno$hoehn_yahr_off <- NULL
+pheno$hoehn_yahr_on <- NULL
+pheno$updrs <- NULL
+pheno$updrs_ii <- NULL
+pheno$updrs_iii_score_off <- NULL
+pheno$updrs_iii_score_on <- NULL
+pheno$updrs_iv <- NULL
+```
+
+
+As you can see, we have far fewer missing values to contend with!
+
+Let's look at a summary of the first 10 columns of expression data set.
+
+```{r sum expr}
+summary(expr[,1:10])
+```
+
+We don't need the X1 variable - this is just remaining row labels in the csv file. Let's remove this variable. 
+
+```{r expr clean}
+expr$X <-NULL
+```
+
+We don't see any evidence of missing values in our summary, but we should check all of the columns (excluding the GeneName). You can check this with the "anyNA"" function. 
+
+```{r check NA}
+anyNA(expr)
+```
+
+Let's identify how big this problem is, and where it occurs.
+
+```{r find NA}
+which(is.na(expr),arr.ind=T)
+```
+
+So one of our gene names is NA! This isn't useful, so let's remove this row.
+
+```{r remove NA}
+expr <- expr[-nrow(expr),]
+```
+
+We should see if the unique identifiers in our two data sets match. Check for a perfect match using the "identical" function.
+
+```{r identifier match}
+identical(colnames(expr[,-1]),as.character(pheno[,1]))
+```
+
+So that we don't lose any work, let's clean up our workspace to include only our cleaned expression and pheno data sets, which we can reload later. 
+
+```{r save workspace, echo=F}
+rm(j)
+rm(index)
+save.image(file="RbootcampDay1.RData")
+```
+
+
+\section{Exploratory Data Analysis}
+
+In this section we are going to explore some of the data we have, and maybe develop a diagnostic signature for Parkinson's disease.
+
+First, load in your data from yesterday. 
+
+```{r load day 1, echo=F}
+load("RbootcampDay1.RData")
+```
+
+Let's re-examine our pheno data set with the summary function again. 
+
+```{r pheno sum}
+summary(pheno)
+```
+
+We need to further delve into our disease label in order to simplify some of this analysis. Attach your pheno data frame using the attach function, and then summarize the disease label vector.
+
+```{r disease lab, warning=F}
+attach(pheno)
+#can just refer to column names now
+summary(disease_label)
+summary(as.factor(disease_label))
+```
+
+Here we have the counts of all the diseases in our data set. If you look at the actual excel file (not the csv), I've put in a dictionary for these acronyms if you're curious. Here, our controls and our genetic unaffected are both considered to be healthy controls. Any label which contains PD is some subset of Parkison's Disease, and the other labels represent other neurological disorders. We need to make a variable which records a 1 for our cases, and a 0 for our controls. Here, since we are interested in a signature that distinguishes PD from our other disease, the other diseases are technically part of the control set.
+
+Try to set your case control vector using the grep function to find the indicies which contain "PD". At the end, sum your case vector to check that it worked. Make another variable of the words "case" and "control"
+
+```{r case vector}
+pdI <- grep("PD",disease_label, value =F)
+case <- rep(0, length(disease_label))
+case[pdI] <-1
+sum(case)
+
+#alternative
+case <- grepl("PD", disease_label)*1
+sum(case)
+
+caseName <- ifelse(case==1,"case","control")
+```
+
+We need to find differentially expressed genes. You'll learn more about this later. For now, feel free to use some of my code. Start by downloading the limma package
+
+```{r limma, warning=F, message=F, results=F}
+## If using Windows, first go to https://cran.rstudio.com/bin/windows/Rtools/ and install the appropriate version of Rtools
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("limma")
+library(limma)
+```
+
+We will use the following code. 
+**Comment this code with your thoughts below.**
+
+```{r find some genes}
+#subset our data for a training and test set
+#Makes data reproducible by setting the seed
+set.seed(2)
+#creates random values for the length of expr -2 between 0 and 1
+prob<-runif(ncol(expr)-1)
+#k is the indexes where prob is greater than 0.333
+k<-which(prob>=0.3333333)
+#creates eset which is expr but without the first column
+eset<-expr[,2:ncol(expr)]
+#picks columns where prob >= 0.333333
+eset<-eset[,k]
+#Makes the rownames of eset the first row of expr
+rownames(eset)<-expr[,1]
+#creates two contrast columns that show columns where case is 0 and 1
+design <- model.matrix(~0+as.factor(case[k]))
+#Runs statistical model
+fit <- eBayes(lmFit(eset,design))
+#prints some results to console
+topTable(fit, coef=2)
+#save all results to the table
+results<-topTable(fit, coef=2, number=Inf)
+```
+Here, we have our gene names, our log fold change for expression, average expression, t statistic, pvalue, adjusted pvalue (for multiple testing!!), and the log odds of differential expression.
+
+Next, we select those genes that have adjusted p-values below 0.001. **Comment the code with your thoughts about what its doing below.** 
+
+```{r filter some genes}
+# selects rows where the p value is below 0.001
+selected  <- row.names(results)[p.adjust(results$P.Value, method="fdr")<0.001]
+#checks if the log column is positive or negative
+direction <- sign(results$logFC)
+#selects rows where p value is < 0.001
+esetSel <- eset[selected, ]
+#call number of rows of esetsel
+nrow(esetSel)
+```
+
+Okay! So we're now looking at just 175 genes!
+
+We are going to make a heat map here. I've provided the code, but **try changing colours, labels, etc. to make it your own.**
+
+```{r make heat map, fig.height=10}
+patientcolors <-ifelse(case[k]==1,"yellow","brown")
+heatmap(as.matrix(esetSel), col=hcl.colors(100,palette="Purples 2"), ColSideColors=patientcolors, distfun = function(x) dist(x,method = 'euclidean'))
+
+```
+
+Notice the annotation bar along the top. This indicates PD vs not PD samples. This heat map is an example of a 'non-supervised method' - where we didn't feed the labelled data to the algorithm. Instead, it is just clustering similar samples together. Because all of our PD samples cluster away from the non-PD samples, we are relatively certian we've picked good biomarkers! We should also check a PCA plot.
+
+```{r make PCA}
+pc<-prcomp(t(esetSel),center=T,scale=T)
+plot(pc,type="l",main="Checking the number of Principle Components")
+#mainly shows 2 principle components
+```
+
+
+Again, I've provided code for you here. **Change it to something you like better!**
+
+
+```{r pca plpt, fig.height=5, warning=FALSE, message=FALSE}
+#install.packages("devtools")
+library(devtools)
+library(ggpubr)
+#install_github("vqv/ggbiplot")
+ 
+library(ggbiplot)
+g <- ggbiplot(pc, obs.scale = 1, var.scale = 1, 
+              groups = as.factor(caseName[k]), ellipse = F, 
+              circle = F, labels=disease_label[k],var.axes = F)
+g <- g + scale_color_discrete(name="")
+g <- g + theme(legend.direction = 'horizontal', 
+               legend.position = 'top', axis.title.y =element_text(size=100))
+g <- g + theme_pubclean()
+print(g)
+```
+
+We have separation! Notice the obvious differences between cases and controls.
+
+Make a variable which only contains the differential gene names and call it diffGenes AND print out all of these gene names using one line of code.
+
+```{r get gene names}
+diffGenes <- selected
+```
+
+To use these genes as a classifier, we will need to define a score function. Our score will be the sum of the average expression for the upregulated (positive) genes and the average for the down regulated (negative) genes. Here, I've written you a function which will do this. Please enter it and **make comments to show you understand what its doing.** 
+
+```{r make function}
+PDscore<-function(x,g,v,s){
+  #x expression values for a sample
+  #g all the genes
+  #v the diffGenes
+  #s is the sign of the logFC
+  
+  #sets i equal to indeces where all genes (g) are in v
+  i<-which(g%in%v)
+  #changes x to where g is in v
+  x<-x[i]
+  #changes s to where g is in v
+  s<-s[i]
+  #sets up empty vector p
+  p<-c()
+  #sets up empty vector n
+  n<-c()
+  #goes through length of x and if s[i]>0, that value is added to p
+  #if s[i] is less than 0, that value is added to n
+  for(i in 1:length(x)){
+    if(s[i]>0){
+      p<-append(p,(x[i]))
+    }
+    else if(s[i]<0){
+      n<-append(n,(x[i]))
+    }
+  }
+  #replaces NA values of p and with zeros
+  if(is.null(p)){p[1]=0}
+  if(is.null(n)){n[1]=0}
+  #sets score equal to difference of the average of p and n
+  score<-mean(p)-mean(n)
+  return(score)
+}
+```
+
+Now we can apply our function to our expression set to define a score for each patient. **Comment what this is doing and why each step is necessary!**
+
+```{r apply function}
+#sets score equal to an empty vector
+score<-c()
+#gets list of all genes that are also in results table
+allGenes<-as.character(expr[as.character(expr$GeneName)%in%rownames(results),1])
+#go through each column in eset and assign PD score
+for(i in 1:ncol(eset)){
+  score[i]<-PDscore(eset[,i],allGenes,diffGenes,direction)
+}
+
+hist(score,main="Distribution of our PD Scores")
+```
+
+Now we'll use ggplot to make and interpret a violin plot of our score. I've provided some code to do this, but **try to change labels, colours, etc. to make it your own.** 
+
+```{r violin plot, fig.height=10, fig.width=7, warning=F, message=F}
+#install.packages("ggpubr")
+library(ggpubr)
+
+df<-data.frame(cbind(case[k],score))
+
+dp <- ggplot(df, aes(x=as.factor(case[k]), y=score, fill=as.factor(case[k]))) +
+  geom_violin(trim=FALSE)+
+  geom_boxplot(width=0.3, fill="pink")+
+  labs(title="Plot of case by score",x="Case ", y = "Score")+
+  stat_compare_means(label.x = 1.5, label.y = 1, size=10)+
+  stat_compare_means(aes(label = ..p.signif..), 
+                        label.x = 1.5, label.y = 0.9, size =10)
+dp + theme(text = element_text(size = 18),legend.position="none")
+```
+
+This shows not only the boxplot of our data, but also the distribution of our data points around the boxplot! As before, we can see that we DO have significant separation for our score, and we can see that the cases are trending to have a higher score. With more time and data cleaning we may be able to find something here!
+
+Let's make a roc plot, first with our training data, and then with our test data. As before, **play with the plot options to make something you like!**
+
+```{r ROC plot 1, warning=F, message=F}
+#install.packages("verification")
+#install.packages("pROC")
+library("pROC")
+testEset<-expr[,2:ncol(expr)]
+testEset<-testEset[,-k]
+newScore<-apply(testEset,2,FUN=PDscore,allGenes,diffGenes,direction)
+plot.roc(case[k]~score, data=df,legacy.axes=F,print.auc=T, ci=T, main="AUC for Diagnostic Score",col="purple")
+plot.roc(case[-k]~newScore,data=data.frame(cbind(case[-k],newScore)),add=T,print.auc=T, ci=T, col="orange", print.auc.y=0.4)
+legend("bottom",c("Training Data","Test Data"),lty=c(1,1),col=c("purple","orange"))
+```
+
+Notice that our score does better with our training data - this is expected! This is why we need to split our data, to avoid problems with over-fitting. These scores are better than random (the grey line), but we'd like to see an AUC as close to 1 as possible. Let's see if we can do better!
+
+\section{Statistics!}
+
+We can run a t-test to see if our score is significantly different between cases and controls. Try using the t.test function in R.
+
+```{r t test}
+allScore <- c(score,newScore)
+mergeCase <- c(case[k],case[-k])
+t.test(allScore[mergeCase==0],allScore[mergeCase==1])
+```
+
+The mean scores for our cases and controls are close, but they are significantly different with an extremely small p-value of 2.787e-13. This highlights a classical statistical fallacy - while small p-values are great, they are often meaningless without a large enough effect size. Here, we have achieved significance due to the large sample size of our study, hence our study is adequately powered. 
+
+We could also run a simple regression to examine the impact of the score on the log odds of being a case. 
+
+```{r small model}
+smallModel <- glm(case[k]~score,family=binomial)
+summary(smallModel)
+```
+
+Summarize this output!
+
+Again, we conclude that the score is a statistically significant indicator of the odds of having PD. Let's build a larger model which examines other phenotype variables.
+
+First, build a data frame which includes all the model data we're interested in. Start with the age variables in your pheno set, and then use the cbind() function to add on our scores and the binary case vector. Print a summary of the model data.
+```{r subset exp}
+modelData <- cbind(pheno[k,3:7],score)
+summary(modelData)
+```
+
+We should examine the correlations in our data set. You can do this quickly by building a correlation plot matrix. 
+
+```{r corr plot, fig.height=10, warning=F, message=F}
+#install.packages("corrplot")
+library(corrplot)
+M<-cor(modelData[-1],use="pairwise.complete.obs") #for  missing data
+corrplot.mixed(M)
+```
+
+How would you interpret this output? **Answer below!**
+
+```{r}
+#Bigger and darker circles correspond to stronger correlation. AvgUpdrs and AvgHoehn are 
+#strongly correlated. Score and moca score are the least correlate
+```
+Let's build our first model. Here, we consider the case as our dependent variable, and the others as our explanatory variables.
+```{r first model}
+model1<-glm(case[k]~.,family=binomial,data=modelData)
+summary(model1)
+```
+
+ We will iteratively remove variables with the highest p-values, and then rerun the model until we have our optimal fit!. 
+
+Try this on your own first. 
+
+```{r reduce bayes}
+model1<-glm(case[k]~.,family=binomial,data=modelData)
+summary(model1)
+model2 <- glm(case[k]~.,family=binomial,data=modelData[,-2])
+summary(model2)
+model3 <- glm(case[k]~.,family=binomial,data=modelData[,c(-2,-1)])
+summary(model3)
+model4 <- glm(case[k]~.,family=binomial,data=modelData[,c(-1,-2,-3)])
+summary(model4)
+```
+
+This is our final model! Notice that our largest effect size is controlled by our genetic score. At a first glance, we might assume this means that the score has the largest effect on the model. However, if we recall how to interpret our coefficients, the estimated effect size is the change in log odds of being a case for a 1 unit increase in our score. Think about the score distribution: the range of our scores is fairly small. In contrast, the range of the updrs scores varies from 0 to 36. Keep in mind the scale of our data when interpreting these models!
+
+Compare this to your outcome if you use a step function to reduce the model:
+
+```{r}
+modelData$case <- case[k]
+modelData2 <- na.omit(modelData)
+model1 <-glm(case~sex+AgeMaster+moca_score+AvgUpdrs+AvgHoehn+score,family=binomial,data=modelData2)
+summary(model1)
+
+stepModel <-step(model1)
+summary(stepModel)
+```
+
+Notice that our step-wise reduced model chose to keep both age and overallHoehn despite the insignificant p-value. Why? Answer below!
+
+Let's predict the probability of having a case given our manually reduced model. Make a histogram of the score from this model. 
+
+```{r predict with model,warning=F}
+modelScore <- predict(model4,newdata=modelData)
+hist(modelScore,main="Histogram of Logistic Regrssion Model")
+```
+
+Like before, we'll build a violin plot to compare the output of our regression model. See if you can adapt the violin plot code from before to do this now. 
+
+```{r violin plot2, fig.height=10, fig.width=7}
+library(ggpubr)
+
+df<-data.frame(cbind(case[k],modelScore))
+
+dp <- ggplot(df, aes(x=as.factor(case[k]), y=score, fill=as.factor(case[k]))) +
+  geom_violin(trim=FALSE)+
+  geom_boxplot(width=0.3, fill="pink")+
+  labs(title="Plot of case by score",x="Case ", y = "Score")+
+  stat_compare_means(label.x = 1.5, label.y = 1, size=10)+
+  stat_compare_means(aes(label = ..p.signif..), 
+                        label.x = 1.5, label.y = 0.9, size =10)
+dp + theme(text = element_text(size = 18),legend.position="none")
+```
+
+Now we're starting to see a clearer separation of scores! It's clear that by including the established tests to pre-screen patients for PD and other neurological diseases we have improved overall performance. While this may be an obvious conclusion, it is worth noting that the context with which our diagnostic signature would be used would be on patients already exhibiting potential PD symptoms. Clearly this needs a little more work, but for a first pass at assessing raw data, it's not bad!
+
+
+Again, we can examine ROC curves. I've done some of the set up to get the data in the right format. Use the ROC code above to then build your own plot!
+
+```{r ROC plot 2, warning=F}
+library("pROC")
+nd<-cbind(pheno[-k,],newScore)
+colnames(nd)<-c(colnames(nd[1:ncol(nd)-1]),"score")
+newMScore<-predict(model4,newdata=nd)
+
+plot.roc(case[k]~modelScore, data=nd,legacy.axes=F,print.auc=T, ci=T, main="AUC for Diagnostic Score",col="purple")
+plot.roc(case[-k]~newMScore,data=data.frame(cbind(case[-k],newMScore)),add=T,print.auc=T, ci=T, col="orange", print.auc.y=0.4)
+legend("bottom",c("Training Data","Test Data"),lty=c(1,1),col=c("purple","orange"))
+
+#your code for ROC plots here
+```
+
+Here, we have a notable increase in AUC, particularly for our training data. Our test data shows an overal improvement as well, although with a large confidence interval. There are clearly some data points in here which are abnormal - and perhaps worth investigating.
+
+##Congratulations, you have finished the R Bootcamp Assignment!
